@@ -18,7 +18,8 @@ export default function BetModal({ marketId, onClose }: BetModalProps) {
     setLoading(true);
     try {
       const res = await placeBet(marketId, { side, amount_points: amount });
-      setStatus(`✅ Bet placed successfully! New balance: ${(res.new_balance_cents / 100).toFixed(2)} pts`);
+      const newBal = (res.new_balance_points ?? res.new_balance_cents / 100).toFixed(2);
+      setStatus(`✅ Bet placed! New balance: ${newBal}`);
     } catch (err: any) {
       setStatus(`❌ ${err.message || "Failed to place bet"}`);
     } finally {
@@ -29,47 +30,28 @@ export default function BetModal({ marketId, onClose }: BetModalProps) {
   return (
     <div
       style={{
-        position: "fixed",
-        top: 0, left: 0, width: "100vw", height: "100vh",
-        backgroundColor: "rgba(0,0,0,0.5)",
-        display: "flex", justifyContent: "center", alignItems: "center",
-        zIndex: 1000,
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000
       }}
     >
-      <div style={{ background: "white", padding: 20, borderRadius: 8, width: 320 }}>
+      <div style={{ background: "#fff", padding: 20, borderRadius: 8, width: 320 }}>
         <h2>Place Bet</h2>
         <form onSubmit={submit} style={{ display: "grid", gap: 8 }}>
           <label>
-            Option:
+            Option:&nbsp;
             <select value={side} onChange={(e) => setSide(e.target.value as "YES" | "NO")}>
               <option value="YES">YES</option>
               <option value="NO">NO</option>
             </select>
           </label>
-
           <label>
-            Amount:
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(Number(e.target.value))}
-              min={1}
-            />
+            Amount:&nbsp;
+            <input type="number" min={1} value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
           </label>
-
-          <button type="submit" disabled={loading || amount <= 0}>
-            {loading ? "Placing..." : "Submit Bet"}
-          </button>
-          <button type="button" onClick={onClose} style={{ marginTop: 8 }}>
-            Cancel
-          </button>
+          <button type="submit" disabled={loading || amount <= 0}>{loading ? "Placing..." : "Submit Bet"}</button>
+          <button type="button" onClick={onClose}>Cancel</button>
         </form>
-
-        {status && (
-          <div style={{ marginTop: 12, fontSize: 14 }}>
-            {status}
-          </div>
-        )}
+        {status && <div style={{ marginTop: 10 }}>{status}</div>}
       </div>
     </div>
   );

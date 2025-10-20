@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import users, markets, bets, admin, auth
+from fastapi.responses import JSONResponse
 
-app = FastAPI(title="Prediction Market (Pari-mutuel)")
+from .routers import users, markets, bets, auth, admin
+
+app = FastAPI(title="Prediction Market API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,12 +14,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount routers (note the /users prefix)
+app.include_router(auth.router,    prefix="/auth",  tags=["auth"])
+app.include_router(users.router,   prefix="/users", tags=["users"])
+app.include_router(markets.router, prefix="",       tags=["markets"])
+app.include_router(bets.router,    prefix="",       tags=["bets"])
+app.include_router(admin.router,   prefix="/admin", tags=["admin"])
+
 @app.get("/health")
 def health():
     return {"ok": True}
 
-app.include_router(users.router, prefix="/users", tags=["users"])
-app.include_router(markets.router, prefix="/markets", tags=["markets"])
-app.include_router(bets.router, tags=["bets"])
-app.include_router(admin.router, prefix="/admin", tags=["admin"])
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
+@app.exception_handler(HTTPException)
+async def http_exc_handler(request: Request, exc: HTTPException):
+    return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
+
+@app.exception_handler(Exception)
+async def unhandled_exc_handler(request: Request, exc: Exception):
+    return JSONResponse(status_code=500, content={"error": "Internal server error"})

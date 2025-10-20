@@ -1,15 +1,30 @@
 const API = import.meta.env.VITE_API_URL;
 
-/* ---------- AUTH ---------- */
+/* -------------- helpers -------------- */
+function authHeaders(): HeadersInit {
+  const token = localStorage.getItem("token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
+async function handle(r: Response) {
+  if (r.status === 401) {
+    localStorage.removeItem("token");
+    localStorage.removeItem("username");
+    window.location.href = "/signin";
+    throw new Error("Unauthorized");
+  }
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+/* -------------- auth -------------- */
 export async function register(username: string, password: string, starting_points = 1000) {
   const r = await fetch(`${API}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" } as HeadersInit,
     body: JSON.stringify({ username, password, starting_points }),
   });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  return handle(r);
 }
 
 export async function login(username: string, password: string) {
@@ -18,45 +33,33 @@ export async function login(username: string, password: string) {
     headers: { "Content-Type": "application/json" } as HeadersInit,
     body: JSON.stringify({ username, password }),
   });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  return handle(r);
 }
 
-export function authHeaders(): HeadersInit {
-  const token = localStorage.getItem("token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-/* ---------- MARKETS ---------- */
-
+/* -------------- markets -------------- */
 export async function getOpenMarkets() {
   const r = await fetch(`${API}/markets?status=open`, {
     headers: { ...authHeaders() } as HeadersInit,
   });
-  if (!r.ok) throw new Error("Failed to fetch markets");
-  return r.json();
+  return handle(r);
 }
 
-/* ---------- USERS ---------- */
-
-export async function getUser(username: string) {
-  const r = await fetch(`${API}/users/${encodeURIComponent(username)}`, {
+/* -------------- users (token-based) -------------- */
+export async function getMe() {
+  const r = await fetch(`${API}/users/me`, {
     headers: { ...authHeaders() } as HeadersInit,
   });
-  if (!r.ok) throw new Error("User not found");
-  return r.json();
+  return handle(r);
 }
 
-export async function getUserBets(username: string) {
-  const r = await fetch(`${API}/users/${encodeURIComponent(username)}/bets`, {
+export async function getMyBets() {
+  const r = await fetch(`${API}/users/me/bets`, {
     headers: { ...authHeaders() } as HeadersInit,
   });
-  if (!r.ok) throw new Error("Failed to fetch user bets");
-  return r.json();
+  return handle(r);
 }
 
-/* ---------- BETS ---------- */
-
+/* -------------- bets -------------- */
 export async function placeBet(
   marketId: string,
   body: { side: "YES" | "NO"; amount_points: number }
@@ -66,6 +69,5 @@ export async function placeBet(
     headers: { "Content-Type": "application/json", ...authHeaders() } as HeadersInit,
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  return handle(r);
 }
