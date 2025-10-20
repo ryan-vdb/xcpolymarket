@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { getOpenMarkets } from "../lib/api";
+import BetModal from "../components/BetModal";
 
 export default function Markets() {
   const [markets, setMarkets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [activeMarket, setActiveMarket] = useState<string | null>(null);
 
   useEffect(() => {
     getOpenMarkets().then(setMarkets).catch(e => setErr(String(e))).finally(() => setLoading(false));
@@ -23,9 +25,16 @@ export default function Markets() {
             <div>YES: {(m.odds.yes*100).toFixed(1)}% · pays ~{m.implied_payout_per1.yes.toFixed(2)}x</div>
             <div>NO:  {(m.odds.no*100).toFixed(1)}%  · pays ~{m.implied_payout_per1.no.toFixed(2)}x</div>
           </div>
-          <button style={{marginTop:8}}>Place/Edit Bet</button>
+          <button style={{marginTop:8}} onClick={() => setActiveMarket(m.id)}>Place/Edit Bet</button>
         </div>
       ))}
+      {activeMarket && (
+        <BetModal
+            marketId={activeMarket}
+            username="alice"  // hardcoded for now
+            onClose={() => setActiveMarket(null)}
+        />
+        )}
     </div>
   );
 }

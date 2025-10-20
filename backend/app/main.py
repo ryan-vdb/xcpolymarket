@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import users, markets, bets, admin
+from .routers import users, markets, bets, admin, auth
 
 app = FastAPI(title="Prediction Market (Pari-mutuel)")
 
@@ -20,3 +20,4 @@ app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(markets.router, prefix="/markets", tags=["markets"])
 app.include_router(bets.router, tags=["bets"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(auth.router, prefix="/auth", tags=["auth"])

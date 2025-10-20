@@ -21,3 +21,10 @@ export async function placeBet(marketId: string, body: {username:string; side:'Y
   if (!r.ok) throw new Error("Bet failed");
   return r.json();
 }
+
+export async function getUserBets(username: string) {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/users/${encodeURIComponent(username)}/bets`);
+  if (!r.ok) throw new Error("Failed to fetch user bets");
+  return r.json();
+}
