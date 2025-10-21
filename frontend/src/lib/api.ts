@@ -80,3 +80,26 @@ export async function getLeaderboard() {
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
+export async function trade(marketId: string, body: { side: "YES"|"NO"; amount_points: number }) {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/markets/${marketId}/trade`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${localStorage.getItem("token") || ""}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json(); // { ok, filled_shares, new_price_yes, new_balance_points }
+}
+
+export async function getMyPositions() {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/users/me/positions`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` },
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}

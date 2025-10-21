@@ -98,6 +98,52 @@ def me_raw(username: str = Depends(get_current_username)):
         "row": dict(row) if row else None
     }
 
+# GET /users/me/positions  — current share holdings per market
+from ..logic import cpmm_price_yes
+
+@router.get("/me/positions")
+def get_my_positions(username: str = Depends(get_current_username)):
+    with conn() as c:
+        rows = c.execute(
+            """
+            SELECT
+              p.market_id,
+              p.yes_shares_cents,
+              p.no_shares_cents,
+              m.question,
+              m.closes_at,
+              m.open,
+              m.s_yes_cents,
+              m.s_no_cents
+            FROM positions p
+            JOIN markets m ON m.id = p.market_id
+            WHERE p.username=?
+            ORDER BY m.closes_at ASC
+            """,
+            (username,),
+        ).fetchall()
+
+    out = []
+    for r in rows:
+        py, pn = int(r["s_yes_cents"]), int(r["s_no_cents"])
+        p_yes = cpmm_price_yes(py, pn)
+        yes_sh = r["yes_shares_cents"] / 100.0
+        no_sh  = r["no_shares_cents"]  / 100.0
+        # Expected value (points): YES shares * p_yes + NO shares * (1 - p_yes)
+        est_value_points = yes_sh * p_yes + no_sh * (1.0 - p_yes)
+
+        out.append({
+            "market_id": r["market_id"],
+            "question": r["question"],
+            "closes_at": r["closes_at"],
+            "open": bool(r["open"]),
+            "price_yes": p_yes,
+            "yes_shares": yes_sh,
+            "no_shares": no_sh,
+            "est_value_points": est_value_points,
+        })
+    return out
+
 # GET /users/{username}
 @router.get("/{username}", response_model=UserOut)
 def get_user(username: str):

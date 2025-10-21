@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { placeBet } from "../lib/api";
+import { trade } from "../lib/api";
 
 interface BetModalProps {
   marketId: string;
@@ -17,7 +17,7 @@ export default function BetModal({ marketId, onClose }: BetModalProps) {
     setStatus(null);
     setLoading(true);
     try {
-      const res = await placeBet(marketId, { side, amount_points: amount });
+      const res = await trade(marketId, { side, amount_points: amount });
       const newBal = (res.new_balance_points ?? res.new_balance_cents / 100).toFixed(2);
       setStatus(`✅ Bet placed! New balance: ${newBal}`);
     } catch (err: any) {
