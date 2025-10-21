@@ -2,33 +2,48 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Markets from "./pages/Markets";
 import Account from "./pages/Account";
 import Leaderboard from "./pages/Leaderboard";
+import AdminTools from "./pages/AdminTools";
 import SignIn from "./pages/SignIn";
 import NavBar from "./components/NavBar";
-import { isLoggedIn } from "./lib/auth";
+import { isLoggedIn, getUsername } from "./lib/auth";
+import { isAdmin } from "./lib/authz";
 
 function PrivateRoute({ children }: { children: React.ReactElement }) {
   return isLoggedIn() ? children : <Navigate to="/signin" replace />;
 }
 
-export default function App() {
-  const authed = isLoggedIn();
+function AdminOnly({ children }: { children: React.ReactElement }) {
+  const username = getUsername();
+  return isAdmin(username) ? children : <Navigate to="/" replace />;
+}
 
+export default function App() {
   return (
     <BrowserRouter>
-      {/* Only show the nav bar when authenticated */}
-      {authed && <NavBar />}
+      {/* Always render; NavBar itself hides when logged out */}
+      <NavBar />
 
       <Routes>
-        {/* Sign in is the only public route */}
+        {/* Public */}
         <Route path="/signin" element={<SignIn />} />
 
-        {/* Everything else is gated */}
+        {/* Private */}
         <Route path="/markets" element={<PrivateRoute><Markets /></PrivateRoute>} />
         <Route path="/account" element={<PrivateRoute><Account /></PrivateRoute>} />
-        <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/leaderboard" element={<PrivateRoute><Leaderboard /></PrivateRoute>} />
+        <Route
+          path="/admin"
+          element={
+            <PrivateRoute>
+              <AdminOnly>
+                <AdminTools />
+              </AdminOnly>
+            </PrivateRoute>
+          }
+        />
 
-        {/* Default: if authed go to markets, else go to sign in */}
-        <Route path="*" element={<Navigate to={authed ? "/markets" : "/signin"} replace />} />
+        {/* Default redirect (compute fresh each render) */}
+        <Route path="*" element={<Navigate to={isLoggedIn() ? "/markets" : "/signin"} replace />} />
       </Routes>
     </BrowserRouter>
   );

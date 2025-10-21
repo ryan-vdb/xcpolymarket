@@ -103,3 +103,71 @@ export async function getMyPositions() {
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
+/* ---------------- admin helpers ---------------- */
+function adminHeaders(): HeadersInit {
+  const t = localStorage.getItem("adminToken") || "";
+  return t ? { "X-Admin-Token": t } : {};
+}
+
+export async function adminListUsers() {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/admin/users`, { headers: adminHeaders() });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function adminListMarkets(status?: "open" | "closed") {
+  const API = import.meta.env.VITE_API_URL;
+  const qs = status ? `?status=${status}` : "";
+  const r = await fetch(`${API}/admin/markets${qs}`, { headers: adminHeaders() });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function adminCloseMarket(marketId: string) {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/admin/markets/${marketId}/close`, {
+    method: "POST",
+    headers: adminHeaders(),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function adminSettleMarket(marketId: string, winner: "YES" | "NO") {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/admin/markets/${marketId}/settle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...adminHeaders() },
+    body: JSON.stringify({ winner }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function adminCreateMarket(body: {
+  question: string;
+  closes_at: string; // ISO string
+  seed_yes_points: number;
+  seed_no_points: number;
+}) {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/markets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...adminHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function adminDeleteMarket(marketId: string) {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/admin/markets/${marketId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Token": localStorage.getItem("adminToken") || "" },
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}

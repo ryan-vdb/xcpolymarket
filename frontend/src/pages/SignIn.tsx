@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { login } from "../lib/api";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 export default function SignIn() {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const nav = useNavigate();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -14,11 +15,14 @@ export default function SignIn() {
     setLoading(true);
     try {
       const res = await login(u, p);
-      // fallback to the typed username if backend doesn't return one
       localStorage.setItem("token", res.access_token);
       localStorage.setItem("username", res.username || u);
+
+      // make NavBar react immediately
       window.dispatchEvent(new Event("storage"));
-      window.location.replace("/markets");
+
+      // SPA navigation (no full reload)
+      nav("/markets");
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally {

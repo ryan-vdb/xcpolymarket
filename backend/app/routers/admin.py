@@ -137,6 +137,20 @@ def settle_market(market_id: str, req: SettleReq, x_admin_token: str = Header(de
         c.execute("UPDATE positions SET yes_shares_cents=0, no_shares_cents=0 WHERE market_id=?", (market_id,))
     return {"ok": True, "winner": winner}
 
+@router.delete("/markets/{market_id}")
+def delete_market(
+    market_id: str,
+    x_admin_token: str = Header(default="", alias="X-Admin-Token")
+):
+    _require_admin(x_admin_token)
+    with conn() as c:
+        # First delete all related bets (foreign key cleanup)
+        c.execute("DELETE FROM bets WHERE market_id=?", (market_id,))
+        cur = c.execute("DELETE FROM markets WHERE id=?", (market_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "market not found")
+    return {"ok": True, "deleted_market": market_id}
+
 from fastapi import Header
 
 @router.get("/debug/db")
