@@ -71,3 +71,12 @@ export async function placeBet(
   });
   return handle(r);
 }
+
+export async function getLeaderboard() {
+  const API = import.meta.env.VITE_API_URL;
+  const r = await fetch(`${API}/users/leaderboard`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` },
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}

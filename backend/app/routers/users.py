@@ -6,6 +6,18 @@ from ..auth import get_current_username
 
 router = APIRouter()
 
+# GET /users/leaderboard  — list all users by balance (desc)
+@router.get("/leaderboard")
+def leaderboard():
+    with conn() as c:
+        rows = c.execute(
+            "SELECT username, balance_cents FROM users ORDER BY balance_cents DESC"
+        ).fetchall()
+    return [
+        {"username": r["username"], "balance_points": r["balance_cents"] / 100.0}
+        for r in rows
+    ]
+
 # POST /users  (admin-only seed/create user)
 @router.post("", response_model=UserOut)
 def create_user(req: UserCreate, x_admin_token: str = Header(default="")):

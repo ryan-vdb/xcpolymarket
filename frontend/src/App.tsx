@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Markets from "./pages/Markets";
 import Account from "./pages/Account";
+import Leaderboard from "./pages/Leaderboard";
 import SignIn from "./pages/SignIn";
 import NavBar from "./components/NavBar";
 import { isLoggedIn } from "./lib/auth";
@@ -24,6 +25,7 @@ export default function App() {
         {/* Everything else is gated */}
         <Route path="/markets" element={<PrivateRoute><Markets /></PrivateRoute>} />
         <Route path="/account" element={<PrivateRoute><Account /></PrivateRoute>} />
+        <Route path="/leaderboard" element={<Leaderboard />} />
 
         {/* Default: if authed go to markets, else go to sign in */}
         <Route path="*" element={<Navigate to={authed ? "/markets" : "/signin"} replace />} />

@@ -9,6 +9,7 @@ export default function NavBar() {
     <div style={{ display: "flex", gap: 12, padding: 12, borderBottom: "1px solid #eee" }}>
       <Link to="/markets">Markets</Link>
       <Link to="/account">Account</Link>
+      <Link to="/leaderboard">Leaderboard</Link>
       <div style={{ marginLeft: "auto" }}>
         <span style={{ marginRight: 8 }}>Hi, {user}</span>
         <button onClick={logout}>Log out</button>
