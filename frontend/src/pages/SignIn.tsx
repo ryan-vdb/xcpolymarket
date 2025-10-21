@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { login } from "../lib/api";
-import { useNavigate, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 
 export default function SignIn() {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const nav = useNavigate();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -18,7 +17,8 @@ export default function SignIn() {
       // fallback to the typed username if backend doesn't return one
       localStorage.setItem("token", res.access_token);
       localStorage.setItem("username", res.username || u);
-      nav("/account"); // go straight to account so you can see balance
+      window.dispatchEvent(new Event("storage"));
+      window.location.replace("/markets");
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally {
