@@ -1,20 +1,22 @@
-from pydantic import BaseModel, Field, validator
-from typing import Dict
+# backend/app/schemas/bets.py
+from pydantic import BaseModel, Field
+from typing import Dict, Literal
+
+Side = Literal["YES", "NO"]
 
 class BetReq(BaseModel):
-    # Username comes from JWT; do NOT include it in requests
-    side: str = Field(pattern="^(YES|NO)$")
-    amount_points: float = Field(..., gt=0, le=1_000_000)
-
-    @validator("amount_points")
-    def two_decimals(cls, v: float):
-        # enforce up to 2 decimals
-        if round(v, 2) != v:
-            raise ValueError("amount_points must have at most 2 decimals")
-        return v
+    side: Side
+    # Amount the user wants to SPEND from balance (in points; 1 point = 100 cents).
+    spend_points: float = Field(..., gt=0)
 
 class BetResp(BaseModel):
     ok: bool
     new_balance_points: float
+    # Shares issued to the user by this trade (points of $1 payout each)
+    shares_points_issued: float
+    # Spot price of YES after the fill (0..1)
+    price_yes_after: float
+    # Current odds after the fill (from effective pools)
     odds: Dict[str, float]
-    implied_payout_per1: Dict[str, float]
+    # UI helper: 1/price spot multiples (not average fill)
+    implied_payout_per1_spot: Dict[str, float]

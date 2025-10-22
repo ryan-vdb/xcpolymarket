@@ -1,78 +1,100 @@
 # backend/app/routers/admin.py
-from fastapi import APIRouter, HTTPException, Header, Query
+# Admin utilities: list users/markets/bets, close/settle markets, (optional) delete markets.
+
+from __future__ import annotations
 from typing import Optional
-from ..db import conn
+from fastapi import APIRouter, HTTPException, Header, Query
+from ..db import conn, DB_PATH
 from ..config import ADMIN_TOKEN
-from ..schemas.markets import SettleReq
-from ..logic import odds
+from ..logic import effective_pools, odds_from_pools, implied_payout_per1_spot
 
 router = APIRouter()
+
+# --------- helpers ---------
 
 def _require_admin(token: Optional[str]):
     if token != ADMIN_TOKEN:
         raise HTTPException(401, "admin token required")
 
+
 # --------- LIST VIEWS ---------
 
 @router.get("/users")
-def list_users(x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token")):
+def list_users(
+    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token")
+):
     _require_admin(x_admin_token)
     with conn() as c:
         rows = c.execute(
-            "SELECT username, balance_cents FROM users ORDER BY username ASC"
+            "SELECT username, balance_cents FROM users ORDER BY balance_cents DESC, username ASC"
         ).fetchall()
     return [
         {"username": r["username"], "balance_points": r["balance_cents"] / 100.0}
         for r in rows
     ]
 
+
 @router.get("/markets")
 def list_markets_admin(
     x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
-    status: Optional[str] = Query(default=None)  # open | closed | None
+    status: Optional[str] = Query(default=None)  # open | closed | settled | None
 ):
     _require_admin(x_admin_token)
 
-    where = ""
+    where = []
     if status == "open":
-        where = "WHERE open=1"
+        where.append("open=1 AND settled=0")
     elif status == "closed":
-        where = "WHERE open=0"
+        where.append("open=0 AND settled=0")
+    elif status == "settled":
+        where.append("settled=1")
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
     with conn() as c:
         rows = c.execute(
-            f"SELECT id, question, closes_at, open, s_yes_cents, s_no_cents "
-            f"FROM markets {where} ORDER BY closes_at ASC"
+            f"""
+            SELECT id, question, closes_at, open, settled, winner,
+                   yes_real_cents, no_real_cents, virt_yes_cents, virt_no_cents
+            FROM markets
+            {where_sql}
+            ORDER BY closes_at ASC
+            """
         ).fetchall()
 
     out = []
     for r in rows:
-        o = odds(r["s_yes_cents"], r["s_no_cents"])
+        y_eff, n_eff = effective_pools(
+            r["yes_real_cents"], r["no_real_cents"], r["virt_yes_cents"], r["virt_no_cents"]
+        )
         out.append({
             "id": r["id"],
             "question": r["question"],
             "closes_at": r["closes_at"],
             "open": bool(r["open"]),
-            "yes_pool_points": r["s_yes_cents"] / 100.0,
-            "no_pool_points":  r["s_no_cents"]  / 100.0,
-            "odds": o,
+            "settled": bool(r["settled"]),
+            "winner": r["winner"],
+            "yes_pool_points": r["yes_real_cents"] / 100.0,
+            "no_pool_points":  r["no_real_cents"]  / 100.0,
+            "odds": odds_from_pools(y_eff, n_eff),
+            "implied_payout_per1_spot": implied_payout_per1_spot(y_eff, n_eff),
         })
     return out
 
-@router.get("/positions")
-def list_positions_admin(
+
+@router.get("/bets")
+def list_bets_admin(
     x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
-    limit: int = Query(default=200, ge=1, le=2000)
+    limit: int = Query(default=100, ge=1, le=1000)
 ):
     _require_admin(x_admin_token)
     with conn() as c:
         rows = c.execute(
             """
-            SELECT p.id, p.market_id, p.username, p.yes_shares_cents, p.no_shares_cents, p.created_at,
+            SELECT b.id, b.market_id, b.username, b.side, b.amount_cents, b.created_at,
                    m.question
-            FROM positions p
-            LEFT JOIN markets m ON m.id = p.market_id
-            ORDER BY p.created_at DESC
+            FROM bets b
+            LEFT JOIN markets m ON m.id = b.market_id
+            ORDER BY b.created_at DESC
             LIMIT ?
             """,
             (limit,),
@@ -83,80 +105,143 @@ def list_positions_admin(
             "market_id": r["market_id"],
             "question": r["question"],
             "username": r["username"],
-            "yes_shares": r["yes_shares_cents"] / 100.0,
-            "no_shares":  r["no_shares_cents"]  / 100.0,
+            "side": r["side"],
+            "spend_points": r["amount_cents"] / 100.0,
             "created_at": r["created_at"],
         }
         for r in rows
     ]
 
+
 # --------- ACTIONS ---------
 
 @router.post("/markets/{market_id}/close")
-def close_market(market_id: str, x_admin_token: str = Header(default="", alias="X-Admin-Token")):
+def close_market(
+    market_id: str,
+    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+):
     _require_admin(x_admin_token)
     with conn() as c:
-        cur = c.execute("UPDATE markets SET open=0 WHERE id=? AND open=1", (market_id,))
+        cur = c.execute(
+            "UPDATE markets SET open=0 WHERE id=? AND open=1 AND settled=0",
+            (market_id,),
+        )
         if cur.rowcount == 0:
-            raise HTTPException(404, "market not found or already closed")
+            raise HTTPException(404, "market not found, already closed, or already settled")
     return {"ok": True}
 
-@router.post("/markets/{market_id}/settle")
-def settle_market(market_id: str, req: SettleReq, x_admin_token: str = Header(default="", alias="X-Admin-Token")):
-    """
-    Pay out positions based on outcome:
-      - If YES wins: pay yes_shares_cents to user (1 cent per par share).
-      - If NO  wins: pay no_shares_cents  to user.
-    Then zero-out positions for that market.
-    """
-    _require_admin(x_admin_token)
-    winner = req.winner  # "YES" | "NO"
-    with conn() as c:
-        m = c.execute(
-            "SELECT open FROM markets WHERE id=?",
-            (market_id,)
-        ).fetchone()
-        if not m:
-            raise HTTPException(404, "market not found")
-        if bool(m["open"]):
-            raise HTTPException(400, "close market before settlement")
 
-        rows = c.execute(
-            "SELECT username, yes_shares_cents, no_shares_cents FROM positions WHERE market_id=?",
-            (market_id,)
-        ).fetchall()
-        for r in rows:
-            shares = r["yes_shares_cents"] if winner == "YES" else r["no_shares_cents"]
-            payout = int(shares)  # 1 cent per share of par
-            if payout > 0:
+@router.post("/markets/{market_id}/settle")
+def settle_market(
+    market_id: str,
+    payload: dict,  # expects {"winner": "YES"|"NO"}
+    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+):
+    _require_admin(x_admin_token)
+    winner = (payload or {}).get("winner", "").upper()
+    if winner not in ("YES", "NO"):
+        raise HTTPException(400, "winner must be YES or NO")
+
+    with conn() as c:
+        try:
+            c.execute("BEGIN")
+
+            m = c.execute(
+                "SELECT id, open, settled, winner FROM markets WHERE id=?",
+                (market_id,),
+            ).fetchone()
+            if not m:
+                raise HTTPException(404, "market not found")
+            if bool(m["settled"]):
+                raise HTTPException(400, f"already settled as {m['winner'] or 'UNKNOWN'}")
+            if bool(m["open"]):
+                raise HTTPException(400, "close market before settlement")
+
+            # Pay winners from positions
+            if winner == "YES":
+                rows = c.execute(
+                    "SELECT username, yes_shares_points AS shares FROM positions WHERE market_id=? AND yes_shares_points>0",
+                    (market_id,),
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT username, no_shares_points AS shares FROM positions WHERE market_id=? AND no_shares_points>0",
+                    (market_id,),
+                ).fetchall()
+
+            total_paid_cents = 0
+            for r in rows:
+                payout_cents = int(round(r["shares"] * 100))  # 1 point/share = 100 cents
+                if payout_cents <= 0:
+                    continue
+                total_paid_cents += payout_cents
                 c.execute(
                     "UPDATE users SET balance_cents = balance_cents + ? WHERE username=?",
-                    (payout, r["username"])
+                    (payout_cents, r["username"]),
                 )
-        # prevent double-settlement
-        c.execute("UPDATE positions SET yes_shares_cents=0, no_shares_cents=0 WHERE market_id=?", (market_id,))
-    return {"ok": True, "winner": winner}
+
+            # Zero positions for this market (both sides)
+            c.execute(
+                "UPDATE positions SET yes_shares_points=0.0, no_shares_points=0.0 WHERE market_id=?",
+                (market_id,),
+            )
+
+            # Mark settled to prevent double-settle
+            c.execute(
+                "UPDATE markets SET settled=1, winner=? WHERE id=?",
+                (winner, market_id),
+            )
+
+            c.execute("COMMIT")
+        except HTTPException:
+            c.execute("ROLLBACK")
+            raise
+        except Exception as e:
+            c.execute("ROLLBACK")
+            raise HTTPException(500, f"settlement failed: {e}")
+
+    return {"ok": True, "winner": winner, "total_paid_points": total_paid_cents / 100.0}
+
 
 @router.delete("/markets/{market_id}")
 def delete_market(
     market_id: str,
-    x_admin_token: str = Header(default="", alias="X-Admin-Token")
+    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+    force: bool = Query(default=False, description="Allow deleting even if settled (dev only)"),
 ):
+    """
+    Hard-delete a market and related rows. For development/testing only.
+    By default, refuses to delete if already settled.
+    """
     _require_admin(x_admin_token)
     with conn() as c:
-        # First delete all related bets (foreign key cleanup)
-        c.execute("DELETE FROM bets WHERE market_id=?", (market_id,))
-        cur = c.execute("DELETE FROM markets WHERE id=?", (market_id,))
-        if cur.rowcount == 0:
+        m = c.execute(
+            "SELECT id, settled FROM markets WHERE id=?",
+            (market_id,),
+        ).fetchone()
+        if not m:
             raise HTTPException(404, "market not found")
-    return {"ok": True, "deleted_market": market_id}
+        if bool(m["settled"]) and not force:
+            raise HTTPException(400, "market already settled; pass force=true to delete anyway (dev only)")
 
-from fastapi import Header
+        try:
+            c.execute("BEGIN")
+            c.execute("DELETE FROM bets WHERE market_id=?", (market_id,))
+            c.execute("DELETE FROM positions WHERE market_id=?", (market_id,))
+            c.execute("DELETE FROM markets WHERE id=?", (market_id,))
+            c.execute("COMMIT")
+        except Exception as e:
+            c.execute("ROLLBACK")
+            raise HTTPException(500, f"delete failed: {e}")
+
+    return {"ok": True}
+
+
+# --------- DEBUG ---------
 
 @router.get("/debug/db")
-def debug_db(x_admin_token: str = Header(default="", alias="X-Admin-Token")):
+def debug_db(x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token")):
     _require_admin(x_admin_token)
-    from ..db import DB_PATH
     import os, sqlite3
     exists = os.path.exists(DB_PATH)
     size = os.path.getsize(DB_PATH) if exists else 0

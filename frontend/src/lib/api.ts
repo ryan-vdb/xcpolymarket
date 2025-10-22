@@ -18,7 +18,7 @@ async function handle(r: Response) {
 }
 
 /* -------------- auth -------------- */
-export async function register(username: string, password: string, starting_points = 1000) {
+export async function register(username: string, password: string, starting_points = 50) {
   const r = await fetch(`${API}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" } as HeadersInit,
