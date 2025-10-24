@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Header, Query
 from ..db import conn, DB_PATH
 from ..config import ADMIN_TOKEN
 from ..logic import effective_pools, odds_from_pools, implied_payout_per1_spot
+from ..schemas.markets import SettleReq
 
 router = APIRouter()
 
@@ -134,71 +135,73 @@ def close_market(
 @router.post("/markets/{market_id}/settle")
 def settle_market(
     market_id: str,
-    payload: dict,  # expects {"winner": "YES"|"NO"}
-    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+    req: SettleReq,
+    x_admin_token: str = Header(default="", alias="X-Admin-Token"),
 ):
     _require_admin(x_admin_token)
-    winner = (payload or {}).get("winner", "").upper()
-    if winner not in ("YES", "NO"):
-        raise HTTPException(400, "winner must be YES or NO")
+    winner = req.winner  # "YES" or "NO"
 
     with conn() as c:
-        try:
-            c.execute("BEGIN")
+        # Load market (must be closed & not yet settled)
+        m = c.execute(
+            """
+            SELECT open, settled,
+                   yes_real_cents, no_real_cents
+            FROM markets WHERE id=?
+            """,
+            (market_id,),
+        ).fetchone()
 
-            m = c.execute(
-                "SELECT id, open, settled, winner FROM markets WHERE id=?",
+        if not m:
+            raise HTTPException(404, "market not found")
+        if bool(m["open"]):
+            raise HTTPException(400, "close market before settlement")
+        if bool(m["settled"]):
+            return {"ok": True, "winner": winner, "total_paid_points": 0.0}
+
+        # Determine winner-side shares column
+        if winner == "YES":
+            shares_col = "yes_shares_points"
+            pool_cents = m["yes_real_cents"]
+        else:
+            shares_col = "no_shares_points"
+            pool_cents = m["no_real_cents"]
+
+        # Sum total winner shares (in *points*, float)
+        row = c.execute(
+            f"SELECT COALESCE(SUM({shares_col}), 0.0) AS total_shares FROM positions WHERE market_id=?",
+            (market_id,),
+        ).fetchone()
+        total_winner_shares_points = row["total_shares"] or 0.0
+
+        total_paid_cents = 0
+
+        if total_winner_shares_points > 0 and pool_cents > 0:
+            # Pay each holder pro-rata from the real pool (points = dollars)
+            holders = c.execute(
+                f"""
+                SELECT username, {shares_col} AS sh
+                FROM positions
+                WHERE market_id=? AND {shares_col} > 0
+                """,
                 (market_id,),
-            ).fetchone()
-            if not m:
-                raise HTTPException(404, "market not found")
-            if bool(m["settled"]):
-                raise HTTPException(400, f"already settled as {m['winner'] or 'UNKNOWN'}")
-            if bool(m["open"]):
-                raise HTTPException(400, "close market before settlement")
+            ).fetchall()
 
-            # Pay winners from positions
-            if winner == "YES":
-                rows = c.execute(
-                    "SELECT username, yes_shares_points AS shares FROM positions WHERE market_id=? AND yes_shares_points>0",
-                    (market_id,),
-                ).fetchall()
-            else:
-                rows = c.execute(
-                    "SELECT username, no_shares_points AS shares FROM positions WHERE market_id=? AND no_shares_points>0",
-                    (market_id,),
-                ).fetchall()
+            for h in holders:
+                ratio = float(h["sh"]) / float(total_winner_shares_points)
+                pay_cents = int(round(pool_cents * ratio))
+                if pay_cents > 0:
+                    c.execute(
+                        "UPDATE users SET balance_cents = balance_cents + ? WHERE username=?",
+                        (pay_cents, h["username"]),
+                    )
+                    total_paid_cents += pay_cents
 
-            total_paid_cents = 0
-            for r in rows:
-                payout_cents = int(round(r["shares"] * 100))  # 1 point/share = 100 cents
-                if payout_cents <= 0:
-                    continue
-                total_paid_cents += payout_cents
-                c.execute(
-                    "UPDATE users SET balance_cents = balance_cents + ? WHERE username=?",
-                    (payout_cents, r["username"]),
-                )
-
-            # Zero positions for this market (both sides)
-            c.execute(
-                "UPDATE positions SET yes_shares_points=0.0, no_shares_points=0.0 WHERE market_id=?",
-                (market_id,),
-            )
-
-            # Mark settled to prevent double-settle
-            c.execute(
-                "UPDATE markets SET settled=1, winner=? WHERE id=?",
-                (winner, market_id),
-            )
-
-            c.execute("COMMIT")
-        except HTTPException:
-            c.execute("ROLLBACK")
-            raise
-        except Exception as e:
-            c.execute("ROLLBACK")
-            raise HTTPException(500, f"settlement failed: {e}")
+        # Mark market settled
+        c.execute(
+            "UPDATE markets SET settled=1, winner=? WHERE id=?",
+            (winner, market_id),
+        )
 
     return {"ok": True, "winner": winner, "total_paid_points": total_paid_cents / 100.0}
 

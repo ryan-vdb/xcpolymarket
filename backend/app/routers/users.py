@@ -44,6 +44,7 @@ def get_my_bets(username: str = Depends(get_current_username)):
             "open": bool(r["open"]),
             "side": r["side"],
             "spend_points": r["amount_cents"] / 100.0,
+            "amount_points": r["amount_cents"] / 100.0,
             "created_at": r["created_at"],
         }
         for r in rows

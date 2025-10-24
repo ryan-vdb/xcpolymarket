@@ -17,18 +17,11 @@ def place_bet(
     req: BetReq,
     username: str = Depends(get_current_username),
 ):
-    """Execute a CPMM buy (YES or NO) spending `spend_points` from the user's balance.
+    # normalize/validate
+    side = req.side.upper().strip()
+    if side not in ("YES", "NO"):
+        raise HTTPException(400, "side must be YES or NO")
 
-    - Converts spend_points → cents.
-    - Ensures market exists and is open.
-    - Ensures user has sufficient balance.
-    - Uses logic.apply_buy(...) to calculate shares and new pools.
-    - Updates markets.{yes_real_cents,no_real_cents}.
-    - UPSERT into positions (yes_shares_points/no_shares_points).
-    - Optionally logs a row in bets (ledger).
-    - Returns new balance and post-trade odds/price.
-    """
-    # convert points -> cents (ints)
     spend_cents = int(round(req.spend_points * 100))
     if spend_cents <= 0:
         raise HTTPException(400, "spend_points must be > 0")
@@ -39,13 +32,14 @@ def place_bet(
         try:
             c.execute("BEGIN")
 
-            # --- Load market and ensure tradable
+            # Market must exist and be open
             m = c.execute(
                 """
                 SELECT id, open, closes_at,
                        yes_real_cents, no_real_cents,
                        virt_yes_cents, virt_no_cents
-                FROM markets WHERE id=?
+                FROM markets
+                WHERE id=?
                 """,
                 (market_id,),
             ).fetchone()
@@ -54,7 +48,7 @@ def place_bet(
             if not bool(m["open"]):
                 raise HTTPException(400, "market is closed")
 
-            # --- Load user & check balance
+            # User must exist & have balance
             u = c.execute(
                 "SELECT balance_cents FROM users WHERE username=?",
                 (username,),
@@ -64,9 +58,9 @@ def place_bet(
             if u["balance_cents"] < spend_cents:
                 raise HTTPException(400, "insufficient balance")
 
-            # --- Compute CPMM outcome (does not mutate DB)
+            # Compute CPMM outcome (pure math, no side-effects)
             out = apply_buy(
-                side=req.side,
+                side=side,
                 spend_cents=spend_cents,
                 yes_real_cents=m["yes_real_cents"],
                 no_real_cents=m["no_real_cents"],
@@ -74,12 +68,13 @@ def place_bet(
                 virt_no_cents=m["virt_no_cents"],
             )
 
-            # --- Persist: debit user, update pools, upsert positions, append ledger
+            # 1) Debit user
             c.execute(
                 "UPDATE users SET balance_cents = balance_cents - ? WHERE username=?",
                 (spend_cents, username),
             )
 
+            # 2) Update market real pools
             c.execute(
                 """
                 UPDATE markets
@@ -89,48 +84,45 @@ def place_bet(
                 (out["new_yes_real_cents"], out["new_no_real_cents"], market_id),
             )
 
-            # positions: one row per (market_id, username)
+            # 3) Upsert positions (store issued shares in points as REAL)
+            add_yes_points = out["shares_points_issued"] if side == "YES" else 0.0
+            add_no_points  = out["shares_points_issued"] if side == "NO"  else 0.0
+
             pos = c.execute(
                 "SELECT yes_shares_points, no_shares_points FROM positions WHERE market_id=? AND username=?",
                 (market_id, username),
             ).fetchone()
-
-            if req.side == "YES":
-                add_yes = out["shares_points_issued"]
-                add_no = 0.0
-            else:
-                add_yes = 0.0
-                add_no = out["shares_points_issued"]
 
             if pos:
                 c.execute(
                     """
                     UPDATE positions
                        SET yes_shares_points = yes_shares_points + ?,
-                           no_shares_points  = no_shares_points  + ?
+                           no_shares_points  = no_shares_points  + ?,
+                           created_at = ?
                      WHERE market_id=? AND username=?
                     """,
-                    (add_yes, add_no, market_id, username),
+                    (add_yes_points, add_no_points, now, market_id, username),
                 )
             else:
                 c.execute(
                     """
-                    INSERT INTO positions (market_id, username, yes_shares_points, no_shares_points, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO positions (id, market_id, username, yes_shares_points, no_shares_points, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (market_id, username, add_yes, add_no, now),
+                    (str(uuid.uuid4()), market_id, username, add_yes_points, add_no_points, now),
                 )
 
-            # optional: append to bets ledger for audit/history
+            # 4) Append to bets ledger (optional but useful)
             c.execute(
                 """
                 INSERT INTO bets (id, market_id, username, side, amount_cents, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (str(uuid.uuid4()), market_id, username, req.side, spend_cents, now),
+                (str(uuid.uuid4()), market_id, username, side, spend_cents, now),
             )
 
-            # fetch new user balance for response
+            # New balance for response
             new_bal = c.execute(
                 "SELECT balance_cents FROM users WHERE username=?",
                 (username,),
@@ -145,9 +137,10 @@ def place_bet(
             c.execute("ROLLBACK")
             raise HTTPException(500, f"Bet failed: {e}")
 
-    # Also compute odds/implied from *current effective* pools for the response
+    # Response odds/price from effective pools AFTER trade
     yes_eff, no_eff = effective_pools(
-        out["new_yes_real_cents"], out["new_no_real_cents"], m["virt_yes_cents"], m["virt_no_cents"]
+        out["new_yes_real_cents"], out["new_no_real_cents"],
+        m["virt_yes_cents"], m["virt_no_cents"]
     )
     odds_after = odds_from_pools(yes_eff, no_eff)
     implied = implied_payout_per1_spot(yes_eff, no_eff)

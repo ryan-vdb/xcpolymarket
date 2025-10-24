@@ -62,12 +62,12 @@ export async function getMyBets() {
 /* -------------- bets -------------- */
 export async function placeBet(
   marketId: string,
-  body: { side: "YES" | "NO"; amount_points: number }
+  body: { side: "YES" | "NO"; spend_points: number }   // <-- spend_points
 ) {
   const r = await fetch(`${API}/markets/${marketId}/bet`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() } as HeadersInit,
-    body: JSON.stringify(body),
+    body: JSON.stringify(body),                         // sends spend_points
   });
   return handle(r);
 }

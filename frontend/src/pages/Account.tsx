@@ -1,72 +1,111 @@
+// frontend/src/pages/Account.tsx
 import { useEffect, useState } from "react";
-import { getMe } from "../lib/api";
-import { getMyPositions } from "../lib/api";
+import { getMe, getMyBets } from "../lib/api";
+import { fmtUsd, absDate } from "../lib/format";
 
 type Me = { username: string; balance_points: number };
-type PositionRow = {
+
+type MyBet = {
   market_id: string;
   question: string;
   closes_at: string;
   open: boolean;
-  price_yes: number;         // 0..1
-  yes_shares: number;        // shares (par=1 point-dollar on win)
-  no_shares: number;
-  est_value_points: number;  // mark-to-market EV in points
+  side: "YES" | "NO";
+  amount_points: number;
+  yes_pool_points: number;
+  no_pool_points: number;
 };
 
 export default function Account() {
   const [me, setMe] = useState<Me | null>(null);
-  const [pos, setPos] = useState<PositionRow[]>([]);
+  const [bets, setBets] = useState<MyBet[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function run() {
-      try {
-        const [meRes, posRes] = await Promise.all([getMe(), getMyPositions()]);
-        setMe(meRes);
-        setPos(posRes);
-      } catch (e: any) {
-        setErr(String(e));
-      } finally {
-        setLoading(false);
-      }
+  async function load() {
+    try {
+      setErr(null);
+      setLoading(true);
+      const user = await getMe();          // TOKEN-BASED
+      setMe(user);
+      const myBets = await getMyBets();    // TOKEN-BASED
+      setBets(myBets);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setLoading(false);
     }
-    run();
-  }, []);
+  }
+
+  useEffect(() => { load(); }, []);
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1>Account</h1>
+    <div style={{ padding: 16, display: "grid", gap: 12 }}>
+      <h1 style={{ margin: 0 }}>Account</h1>
+
       {loading && <div>Loading…</div>}
       {err && <div style={{ color: "crimson" }}>{err}</div>}
+
       {me && (
-        <div style={{ margin: "12px 0", fontSize: 18 }}>
-          Balance: <b>{me.balance_points.toLocaleString()}</b> pts
+        <div
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 12,
+            padding: 12,
+            background: "#fff",
+            color: "#111827",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 12, color: "#6b7280" }}>Signed in as</div>
+            <div style={{ fontWeight: 600 }}>{me.username}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: "#6b7280", textAlign: "right" }}>Balance</div>
+            <div
+              style={{
+                fontWeight: 700,
+                fontSize: 20,
+                textAlign: "right",
+                color: "#111827",
+              }}
+            >
+              {fmtUsd(me.balance_points)}
+            </div>
+          </div>
         </div>
       )}
 
-      <h2>Your Markets</h2>
-      {pos.length === 0 ? (
-        <div>No positions yet.</div>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {pos.map((p) => (
-            <div key={p.market_id} style={{ border: "1px solid #eee", padding: 12, borderRadius: 8 }}>
-              <div style={{ fontWeight: 600 }}>{p.question}</div>
-              <div style={{ fontSize: 12, color: "#666" }}>
-                Closes: {p.closes_at} · {p.open ? "Open" : "Closed"}
-              </div>
-              <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>
-                <div>Price YES: {(p.price_yes * 100).toFixed(1)}%</div>
-                <div>YES shares: {p.yes_shares.toLocaleString()}</div>
-                <div>NO shares: {p.no_shares.toLocaleString()}</div>
-                <div>Est. value: {p.est_value_points.toLocaleString()} pts</div>
-              </div>
+      <h2 style={{ margin: "8px 0 0" }}>Your Positions</h2>
+      {(!loading && bets.length === 0) && <div>No active positions yet.</div>}
+
+      <div style={{ display: "grid", gap: 8 }}>
+        {bets.map((b, i) => (
+          <div
+            key={i}
+            style={{
+              border: "1px solid #e5e7eb",
+              borderRadius: 12,
+              padding: 12,
+              background: "#fff",
+              color: "#111827",
+              display: "grid",
+              gap: 4,
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>{b.question}</div>
+            <div style={{ fontSize: 12, color: "#6b7280" }}>
+              Closes: {absDate(b.closes_at)} · Side: {b.side}
             </div>
-          ))}
-        </div>
-      )}
+            <div style={{ fontSize: 14 }}>
+              Stake: {fmtUsd(b.amount_points)}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
